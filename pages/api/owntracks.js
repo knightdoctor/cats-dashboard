@@ -1,10 +1,6 @@
-// Simple API using free jsonbin.io storage
-// Sign up free at https://jsonbin.io to get your own BIN
+// Simple unified API for OwnTracks
+// Handles both /api/owntracks and /api/locations
 
-// Use a shared free bin for testing
-const JSONBIN_API_KEY = 'YOUR_JSONBIN_KEY'; // Get free key from jsonbin.io
-
-// Hospital locations
 const hospitals = {
     'GOSH': { lat: 51.5243, lon: -0.1135 },
     'KCH': { lat: 51.4613, lon: -0.0936 },
@@ -12,7 +8,6 @@ const hospitals = {
     'StMarys': { lat: 51.5172, lon: -0.1762 }
 };
 
-// In-memory cache
 let cache = {};
 
 export default async function handler(req, res) {
@@ -24,11 +19,13 @@ export default async function handler(req, res) {
         return res.status(200).end();
     }
     
-    const path = req.url.split('?')[0];
+    const url = req.url || '';
+    const isOwnTracks = url.includes('owntracks');
+    const isLocations = url.includes('locations');
     
-    // POST - receive location
-    if (path === '/api/owntracks' && req.method === 'POST') {
-        const { lat, lon, tid, tst, acc, vel } = req.body;
+    // POST to owntracks
+    if (isOwnTracks && req.method === 'POST') {
+        const { lat, lon, tid, tst, acc, vel } = req.body || {};
         
         if (!tid) {
             return res.status(400).json({ error: 'No device ID' });
@@ -43,24 +40,22 @@ export default async function handler(req, res) {
         };
         
         // Check geofence
-        const nearHospital = checkGeofence(lat, lon);
-        if (nearHospital) {
-            location.destination = nearHospital.name;
+        const near = checkGeofence(lat, lon);
+        if (near) {
+            location.destination = near.name;
             location.status = 'scene';
         } else {
             location.status = 'available';
         }
         
-        // Update cache
         cache[tid] = location;
-        
         console.log('📍', tid, 'updated');
         
         return res.status(200).json({ success: true, location });
     }
     
-    // GET - return locations
-    if (path === '/api/locations' && req.method === 'GET') {
+    // GET locations
+    if (isLocations && req.method === 'GET') {
         const teams = {};
         
         Object.entries(cache).forEach(([tid, loc]) => {
@@ -79,10 +74,11 @@ export default async function handler(req, res) {
         return res.status(200).json({ teams });
     }
     
-    return res.status(404).json({ error: 'Not found' });
+    return res.status(404).json({ error: 'Not found', url });
 }
 
 function checkGeofence(lat, lon) {
+    if (!lat || !lon) return null;
     for (const [name, h] of Object.entries(hospitals)) {
         if (getDistance(lat, lon, h.lat, h.lon) < 0.5) {
             return { name };
@@ -93,6 +89,10 @@ function checkGeofence(lat, lon) {
 
 function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371;
-    const d = Math.sqrt(Math.pow((lat2-lat1)*111,2) + Math.pow((lon2-lon1)*111*Math.cos(lat1*Math.PI/180),2));
-    return d;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
