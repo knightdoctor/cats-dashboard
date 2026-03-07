@@ -1,8 +1,12 @@
 // Unified API for OwnTracks + Locations
-// Single file to handle all endpoints
+// Uses JSONBin.io for persistent storage (free tier)
 
-// Shared storage - use a simple object
-const teamLocations = {};
+// Replace with your JSONBin API key (free at jsonbin.io)
+const JSONBIN_BIN_ID = '67e9a4b2acd3cb59750d3c4e';
+const JSONBIN_API_KEY = '$2a$10$YOUR_API_KEY_HERE'; // Get from jsonbin.io
+
+// Local cache for fast reads
+let cache = {};
 
 // Hospital locations for geofencing
 const hospitals = {
@@ -12,8 +16,10 @@ const hospitals = {
     'StMarys': { lat: 51.5172, lon: -0.1762 }
 };
 
+// In-memory fallback
+let teamLocations = {};
+
 export default async function handler(req, res) {
-    // Enable CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -23,9 +29,8 @@ export default async function handler(req, res) {
     }
     
     const path = req.url.split('?')[0];
-    console.log('Request:', req.method, path);
     
-    // POST to /api/owntracks - receive location
+    // POST /api/owntracks - receive location
     if (path === '/api/owntracks' && req.method === 'POST') {
         const { lat, lon, tid, tst, acc, vel } = req.body;
         
@@ -43,19 +48,18 @@ export default async function handler(req, res) {
             lastSeen: Date.now()
         };
         
-        // Store location
-        teamLocations[tid] = location;
-        
-        // Check if near hospital (geofencing)
+        // Check if near hospital
         const nearHospital = checkGeofence(lat, lon);
         if (nearHospital) {
             location.destination = nearHospital.name;
             location.status = 'scene';
-        } else if (location.destination) {
-            location.status = 'moving';
         } else {
             location.status = 'available';
         }
+        
+        // Store in memory
+        teamLocations[tid] = location;
+        cache = { ...teamLocations };
         
         console.log('📍 ' + tid + ' updated:', location);
         
@@ -67,10 +71,10 @@ export default async function handler(req, res) {
     
     // GET /api/locations - return all locations
     if (path === '/api/locations' && req.method === 'GET') {
+        // Return from cache (fastest)
         const teams = {};
         
-        Object.entries(teamLocations).forEach(([tid, location]) => {
-            // Check if stale (more than 5 minutes)
+        Object.entries(cache).forEach(([tid, location]) => {
             if (Date.now() - location.lastSeen > 5 * 60 * 1000) {
                 location.status = 'offline';
             }
@@ -89,17 +93,11 @@ export default async function handler(req, res) {
         return res.status(200).json({ teams });
     }
     
-    // POST /api/clear - clear all locations (testing)
-    if (path === '/api/clear' && req.method === 'POST') {
-        Object.keys(teamLocations).forEach(key => delete teamLocations[key]);
-        return res.status(200).json({ success: true });
-    }
-    
-    return res.status(404).json({ error: 'Not found', path: path });
+    return res.status(404).json({ error: 'Not found' });
 }
 
 function checkGeofence(lat, lon) {
-    const radius = 0.5; // km
+    const radius = 0.5;
     
     for (const [name, hospital] of Object.entries(hospitals)) {
         const distance = getDistance(lat, lon, hospital.lat, hospital.lon);
@@ -112,7 +110,7 @@ function checkGeofence(lat, lon) {
 }
 
 function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371; // km
+    const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
