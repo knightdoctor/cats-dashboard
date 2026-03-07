@@ -1,14 +1,10 @@
-// Unified API for OwnTracks + Locations
-// Uses JSONBin.io for persistent storage (free tier)
+// Simple API using free jsonbin.io storage
+// Sign up free at https://jsonbin.io to get your own BIN
 
-// Replace with your JSONBin API key (free at jsonbin.io)
-const JSONBIN_BIN_ID = '67e9a4b2acd3cb59750d3c4e';
-const JSONBIN_API_KEY = '$2a$10$YOUR_API_KEY_HERE'; // Get from jsonbin.io
+// Use a shared free bin for testing
+const JSONBIN_API_KEY = 'YOUR_JSONBIN_KEY'; // Get free key from jsonbin.io
 
-// Local cache for fast reads
-let cache = {};
-
-// Hospital locations for geofencing
+// Hospital locations
 const hospitals = {
     'GOSH': { lat: 51.5243, lon: -0.1135 },
     'KCH': { lat: 51.4613, lon: -0.0936 },
@@ -16,8 +12,8 @@ const hospitals = {
     'StMarys': { lat: 51.5172, lon: -0.1762 }
 };
 
-// In-memory fallback
-let teamLocations = {};
+// In-memory cache
+let cache = {};
 
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -30,25 +26,23 @@ export default async function handler(req, res) {
     
     const path = req.url.split('?')[0];
     
-    // POST /api/owntracks - receive location
+    // POST - receive location
     if (path === '/api/owntracks' && req.method === 'POST') {
         const { lat, lon, tid, tst, acc, vel } = req.body;
         
         if (!tid) {
-            return res.status(400).json({ error: 'No device ID (tid) provided' });
+            return res.status(400).json({ error: 'No device ID' });
         }
         
         const location = {
-            lat: lat,
-            lon: lon,
-            tid: tid,
+            lat, lon, tid,
             timestamp: tst || Math.floor(Date.now() / 1000),
             accuracy: acc || 0,
             velocity: vel || 0,
             lastSeen: Date.now()
         };
         
-        // Check if near hospital
+        // Check geofence
         const nearHospital = checkGeofence(lat, lon);
         if (nearHospital) {
             location.destination = nearHospital.name;
@@ -57,36 +51,28 @@ export default async function handler(req, res) {
             location.status = 'available';
         }
         
-        // Store in memory
-        teamLocations[tid] = location;
-        cache = { ...teamLocations };
+        // Update cache
+        cache[tid] = location;
         
-        console.log('📍 ' + tid + ' updated:', location);
+        console.log('📍', tid, 'updated');
         
-        return res.status(200).json({ 
-            success: true, 
-            location: location 
-        });
+        return res.status(200).json({ success: true, location });
     }
     
-    // GET /api/locations - return all locations
+    // GET - return locations
     if (path === '/api/locations' && req.method === 'GET') {
-        // Return from cache (fastest)
         const teams = {};
         
-        Object.entries(cache).forEach(([tid, location]) => {
-            if (Date.now() - location.lastSeen > 5 * 60 * 1000) {
-                location.status = 'offline';
+        Object.entries(cache).forEach(([tid, loc]) => {
+            if (Date.now() - loc.lastSeen > 5 * 60 * 1000) {
+                loc.status = 'offline';
             }
-            
             teams[tid] = {
-                lat: location.lat,
-                lon: location.lon,
-                status: location.status || 'available',
-                destination: location.destination || null,
-                lastUpdate: location.timestamp * 1000,
-                accuracy: location.accuracy,
-                velocity: location.velocity
+                lat: loc.lat,
+                lon: loc.lon,
+                status: loc.status || 'available',
+                destination: loc.destination || null,
+                lastUpdate: loc.timestamp * 1000
             };
         });
         
@@ -97,25 +83,16 @@ export default async function handler(req, res) {
 }
 
 function checkGeofence(lat, lon) {
-    const radius = 0.5;
-    
-    for (const [name, hospital] of Object.entries(hospitals)) {
-        const distance = getDistance(lat, lon, hospital.lat, hospital.lon);
-        if (distance < radius) {
-            return { name, distance };
+    for (const [name, h] of Object.entries(hospitals)) {
+        if (getDistance(lat, lon, h.lat, h.lon) < 0.5) {
+            return { name };
         }
     }
-    
     return null;
 }
 
 function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
+    const d = Math.sqrt(Math.pow((lat2-lat1)*111,2) + Math.pow((lon2-lon1)*111*Math.cos(lat1*Math.PI/180),2));
+    return d;
 }
