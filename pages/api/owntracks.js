@@ -24,14 +24,15 @@ export default async function handler(req, res) {
     }
     
     // Handle different endpoints
+    // Note: In Next.js API routes, the path is just /owntracks (not /api/owntracks)
     const path = req.url.split('?')[0];
     
-    if (path === '/api/owntracks' && req.method === 'POST') {
+    if ((path === '/owntracks' || path === '/api/owntracks') && req.method === 'POST') {
         // Receive location from OwnTracks
         return handleOwnTracks(req, res);
     }
     
-    if (path === '/api/locations' && req.method === 'GET') {
+    if ((path === '/locations' || path === '/api/locations') && req.method === 'GET') {
         // Return all team locations
         return getLocations(res);
     }
