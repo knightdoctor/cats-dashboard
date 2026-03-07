@@ -1,0 +1,579 @@
+// CATS Transport Dashboard - with OwnTracks + Real-time ETA
+// Add this to your existing dashboard or replace index.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CATS Transport Dashboard - Live</title>
+    
+    <!-- Mapbox GL JS - Better looking map than Leaflet -->
+    <script src='https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css' rel='stylesheet' />
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        
+        #header {
+            background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        #header h1 { font-size: 20px; }
+        
+        #stats {
+            display: flex;
+            gap: 15px;
+            font-size: 13px;
+        }
+        .stat { 
+            background: rgba(255,255,255,0.15); 
+            padding: 6px 12px; 
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        #container { display: flex; flex-direction: column; height: calc(100vh - 60px); }
+        
+        @media (min-width: 768px) {
+            #container { flex-direction: row; }
+        }
+        
+        #sidebar {
+            width: 100%;
+            height: 45%;
+            border-right: none;
+            border-bottom: 1px solid #ddd;
+            overflow-y: auto;
+            background: #f8f9fa;
+        }
+        
+        @media (min-width: 768px) {
+            #sidebar { width: 380px; height: auto; border-right: 1px solid #ddd; border-bottom: none; }
+        }
+        
+        #map { 
+            width: 100%; 
+            height: 55vh; 
+            min-height: 400px;
+        }
+        
+        @media (min-width: 768px) {
+            #map { flex: 1; height: auto; }
+        }
+        
+        #sidebar h2 { 
+            font-size: 16px; 
+            margin: 15px; 
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 15px 15px 10px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .team-card {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            margin: 0 15px 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            border-left: 4px solid #4CAF50;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .team-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.12);
+        }
+        
+        .team-card.status-moving { border-left-color: #2196F3; }
+        .team-card.status-scene { border-left-color: #FF9800; }
+        .team-card.status-hospital { border-left-color: #4CAF50; }
+        .team-card.status-offline { border-left-color: #9E9E9E; }
+        
+        .team-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .team-name { font-weight: 700; color: #1a73e8; font-size: 16px; }
+        .team-status { 
+            font-size: 11px; 
+            padding: 4px 10px; 
+            border-radius: 12px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            font-weight: 500;
+        }
+        
+        .team-details { font-size: 13px; color: #555; }
+        .team-details div { margin: 4px 0; display: flex; align-items: center; gap: 8px; }
+        
+        .team-eta {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a73e8;
+        }
+        
+        .eta-icon { font-size: 18px; }
+        
+        .last-update {
+            font-size: 11px;
+            color: #999;
+            margin-top: 8px;
+        }
+        
+        /* Legend */
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            font-size: 12px;
+            z-index: 1000;
+        }
+        .legend-item { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+        
+        /* Live indicator */
+        .live-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255,255,255,0.2);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: #4CAF50;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* Hospital markers */
+        .hospital-marker {
+            background: #f44336;
+            border: 3px solid white;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+        
+        /* Team markers */
+        .team-marker {
+            width: 40px;
+            height: 40px;
+            background: #1a73e8;
+            border: 3px solid white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .team-marker:hover { transform: scale(1.2); }
+        
+        /* No teams message */
+        .no-teams {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+        .no-teams-icon { font-size: 48px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🚑 CATS Transport Dashboard</h1>
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <button onclick="refreshLocations()" style="
+                background: rgba(255,255,255,0.2);
+                border: none;
+                color: white;
+                padding: 6px 12px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+            ">
+                🔄 Refresh
+            </button>
+            <div class="stat">
+                <span class="live-indicator">
+                    <span class="live-dot"></span>
+                    LIVE
+                </span>
+            </div>
+            <div id="stats">
+                <div class="stat">Teams: <span id="teamCount">0</span></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="container">
+        <div id="sidebar">
+            <div class="section-title">🚑 Team Locations</div>
+            <div id="teamsList">
+                <div class="no-teams">
+                    <div class="no-teams-icon">📍</div>
+                    <div>No teams online</div>
+                    <div style="font-size: 12px; margin-top: 5px;">Configure OwnTracks to see locations</div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="map"></div>
+    </div>
+    
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #f44336;"></div>
+            <span>Hospital (PICU)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #1a73e8;"></div>
+            <span>CATS Team</span>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // CONFIGURATION
+        // ============================================
+        
+        // Get from environment variables (Vercel) or use fallback key
+        // In Vercel: Settings → Environment Variables → MAPBOX_TOKEN
+        // Security note: Add your own key in Vercel, remove from code for production
+        const MAPBOX_TOKEN = '';
+        
+        // ETA Settings
+        // Poll every 30 minutes (1800000ms) to stay within free API limits
+        // Plus manual refresh button
+        const POLL_INTERVAL_MS = 1800000; // 30 minutes
+        
+        // Hospital locations
+        const hospitals = [
+            { name: "GOSH", lat: 51.5243, lon: -0.1135, type: "PICU" },
+            { name: "King's College", lat: 51.4613, lon: -0.0936, type: "PICU" },
+            { name: "Royal Brompton", lat: 51.4897, lon: -0.1758, type: "PICU" },
+            { name: "St Mary's", lat: 51.5172, lon: -0.1762, type: "PICU" },
+            { name: "Northampton", lat: 52.2334, lon: -0.8907, type: "PICU" },
+            { name: "Oxford", lat: 51.7548, lon: -1.2544, type: "PICU" },
+            { name: "Cambridge", lat: 52.1899, lon: 0.1423, type: "PICU" },
+            { name: "Bristol", lat: 51.4545, lon: -2.5879, type: "PICU" },
+        ];
+        
+        // ============================================
+        // STATE
+        // ============================================
+        
+        let map;
+        let teamMarkers = {};
+        let teamLocations = {};
+        
+        // ============================================
+        // INITIALIZE MAP
+        // ============================================
+        
+        function initMap() {
+            // Check if we have a token
+            if (MAPBOX_TOKEN === 'YOUR_MAPBOX_TOKEN_HERE') {
+                console.log('⚠️ Please add your Mapbox token for better maps');
+                // Fallback to Leaflet
+                initLeafletFallback();
+                return;
+            }
+            
+            mapboxgl.accessToken = MAPBOX_TOKEN;
+            
+            map = new mapboxgl.Map({
+                container: 'map',
+                style: 'mapbox://styles/mapbox/light-v11', // Clean, professional style
+                center: [-0.15, 51.5], // London
+                zoom: 8
+            });
+            
+            map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+            
+            map.on('load', () => {
+                addHospitalMarkers();
+                startLocationPolling();
+            });
+        }
+        
+        function initLeafletFallback() {
+            // Fallback to Leaflet if no Mapbox token
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+            document.head.appendChild(link);
+            
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+            script.onload = () => {
+                map = L.map('map').setView([51.5, -0.15], 8);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap'
+                }).addTo(map);
+                addHospitalMarkersLeaflet();
+                startLocationPolling();
+            };
+            document.head.appendChild(script);
+        }
+        
+        // ============================================
+        // HOSPITAL MARKERS
+        // ============================================
+        
+        function addHospitalMarkers() {
+            hospitals.forEach(h => {
+                const el = document.createElement('div');
+                el.className = 'hospital-marker';
+                
+                new mapboxgl.Marker(el)
+                    .setLngLat([h.lon, h.lat])
+                    .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`
+                        <strong>${h.name}</strong><br>
+                        <span style="color: #666;">${h.type}</span>
+                    `))
+                    .addTo(map);
+            });
+        }
+        
+        function addHospitalMarkersLeaflet() {
+            hospitals.forEach(h => {
+                const marker = L.marker([h.lat, h.lon])
+                    .bindPopup(`<strong>${h.name}</strong><br>${h.type}`)
+                    .addTo(map);
+            });
+        }
+        
+        // ============================================
+        // TEAM LOCATION POLLING
+        // ============================================
+        
+        async function startLocationPolling() {
+            // Poll every 30 minutes (as requested)
+            await fetchTeamLocations();
+            setInterval(fetchTeamLocations, POLL_INTERVAL_MS);
+        }
+        
+        // Manual refresh function - call this to update immediately
+        async function refreshLocations() {
+            console.log('🔄 Manual refresh triggered');
+            await fetchTeamLocations();
+        }
+        
+        async function fetchTeamLocations() {
+            try {
+                // Fetch from your API endpoint
+                const response = await fetch('/api/locations');
+                const data = await response.json();
+                
+                if (data.teams) {
+                    updateTeams(data.teams);
+                }
+            } catch (error) {
+                console.log('Using demo data - configure /api/locations');
+                // Demo data for testing
+                updateTeams(getDemoData());
+            }
+        }
+        
+        function getDemoData() {
+            return {
+                'CATS1': {
+                    lat: 51.5074,
+                    lon: -0.1278,
+                    status: 'moving',
+                    destination: 'GOSH',
+                    lastUpdate: Date.now()
+                },
+                'CATS2': {
+                    lat: 51.4613,
+                    lon: -0.0936,
+                    status: 'scene',
+                    lastUpdate: Date.now() - 300000
+                }
+            };
+        }
+        
+        // ============================================
+        // UPDATE TEAMS ON MAP & SIDEBAR
+        // ============================================
+        
+        function updateTeams(teams) {
+            const teamsList = document.getElementById('teamsList');
+            const teamCount = document.getElementById('teamCount');
+            
+            teamCount.textContent = Object.keys(teams).length;
+            
+            // Clear existing markers (Mapbox)
+            Object.values(teamMarkers).forEach(m => m.remove());
+            teamMarkers = {};
+            
+            let html = '';
+            
+            Object.entries(teams).forEach(([id, team]) => {
+                // Update or create marker
+                addTeamMarker(id, team);
+                
+                // Calculate ETA
+                const eta = calculateETA(team);
+                
+                // Status color
+                const statusClass = getStatusClass(team.status);
+                const statusText = getStatusText(team.status);
+                
+                // Time ago
+                const timeAgo = getTimeAgo(team.lastUpdate);
+                
+                html += `
+                    <div class="team-card ${statusClass}">
+                        <div class="team-header">
+                            <span class="team-name">${id}</span>
+                            <span class="team-status">${statusText}</span>
+                        </div>
+                        <div class="team-details">
+                            <div>📍 ${team.lat.toFixed(4)}, ${team.lon.toFixed(4)}</div>
+                            ${team.destination ? `<div>🏥 → ${team.destination}</div>` : ''}
+                        </div>
+                        ${eta ? `
+                            <div class="team-eta">
+                                <span class="eta-icon">🚗</span>
+                                <span>${eta}</span>
+                            </div>
+                        ` : ''}
+                        <div class="last-update">Updated ${timeAgo}</div>
+                    </div>
+                `;
+            });
+            
+            teamsList.innerHTML = html || '<div class="no-teams"><div class="no-teams-icon">📍</div><div>No teams online</div></div>';
+        }
+        
+        function addTeamMarker(id, team) {
+            const el = document.createElement('div');
+            el.className = 'team-marker';
+            el.textContent = id.replace('CATS', '');
+            
+            const marker = new mapboxgl.Marker(el)
+                .setLngLat([team.lon, team.lat])
+                .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`
+                    <strong>${id}</strong><br>
+                    Status: ${getStatusText(team.status)}
+                `))
+                .addTo(map);
+            
+            teamMarkers[id] = marker;
+        }
+        
+        // ============================================
+        // ETA CALCULATION - DISTANCE ONLY (FREE)
+        // ============================================
+        
+        async function calculateETA(team) {
+            if (!team.destination) return null;
+            
+            const dest = hospitals.find(h => h.name === team.destination);
+            if (!dest) return null;
+            
+            // Simple distance estimate - no external API needed
+            // Uses average speed of 48km/h for London (conservative)
+            const distance = getDistance(team.lat, team.lon, dest.lat, dest.lon);
+            const mins = Math.round(distance / 0.8); // 48km/h average
+            return `~${mins} min`;
+        }
+        
+        // ============================================
+        // UTILITY FUNCTIONS
+        // ============================================
+        
+        function getDistance(lat1, lon1, lat2, lon2) {
+            // Haversine distance in km
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+        
+        function getStatusClass(status) {
+            switch(status) {
+                case 'moving': return 'status-moving';
+                case 'scene': return 'status-scene';
+                case 'hospital': return 'status-hospital';
+                default: return 'status-offline';
+            }
+        }
+        
+        function getStatusText(status) {
+            switch(status) {
+                case 'moving': return 'En Route';
+                case 'scene': return 'On Scene';
+                case 'hospital': return 'At Hospital';
+                case 'available': return 'Available';
+                default: return 'Offline';
+            }
+        }
+        
+        function getTimeAgo(timestamp) {
+            const seconds = Math.floor((Date.now() - timestamp) / 1000);
+            if (seconds < 60) return 'just now';
+            if (seconds < 300) return Math.floor(seconds/60) + ' min ago';
+            if (seconds < 3600) return Math.floor(seconds/60) + ' mins ago';
+            return Math.floor(seconds/3600) + ' hours ago';
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', initMap);
+    </script>
+</body>
+</html>
